@@ -1,0 +1,115 @@
+const ADMIN_EMAIL = 'adminrincha@gmail.com';
+const SLIP_FOLDER_NAME = 'RINCHA_Slips';
+const SHEET_NAME = 'Orders';
+
+function doGet(e) {
+  return ContentService
+    .createTextOutput(JSON.stringify({ ok: true, service: 'RINCHA Franchise Order API' }))
+    .setMimeType(ContentService.MimeType.JSON);
+}
+
+function doPost(e) {
+  try {
+    const raw = e && e.postData && e.postData.contents ? e.postData.contents : '{}';
+    const data = JSON.parse(raw);
+
+    const ss = SpreadsheetApp.getActiveSpreadsheet();
+    let sheet = ss.getSheetByName(SHEET_NAME);
+    if (!sheet) {
+      sheet = ss.insertSheet(SHEET_NAME);
+    }
+
+    const headers = [
+      'เวลาที่ส่งบิล',
+      'เลขที่บิล',
+      'สาขาแฟรนไชส์',
+      'ชื่อผู้สั่ง',
+      'เบอร์โทร',
+      'ที่อยู่จัดส่ง',
+      'น้ำหนักรวม (กก.)',
+      'ค่าสินค้า (บาท)',
+      'ค่าส่ง (บาท)',
+      'ยอดสุทธิ (บาท)',
+      'รายละเอียดสินค้า',
+      'หมายเหตุ',
+      'ลิงก์สลิป (Google Drive)',
+      'ชื่อไฟล์สลิป'
+    ];
+
+    if (sheet.getLastRow() === 0) {
+      sheet.appendRow(headers);
+      sheet.setFrozenRows(1);
+    }
+
+    let slipUrl = '';
+    let slipFileName = '';
+
+    if (data.slipBase64 && data.slipMimeType) {
+      const folder = getOrCreateFolder_(SLIP_FOLDER_NAME);
+      const ext = mimeToExtension_(data.slipMimeType);
+      slipFileName = (data.orderId || 'RINCHA') + '_slip_' + Utilities.formatDate(new Date(), 'Asia/Bangkok', 'yyyyMMdd_HHmmss') + ext;
+      const decoded = Utilities.base64Decode(data.slipBase64);
+      const blob = Utilities.newBlob(decoded, data.slipMimeType, slipFileName);
+      const file = folder.createFile(blob);
+      slipUrl = file.getUrl();
+    }
+
+    const itemsSummary = Array.isArray(data.items)
+      ? data.items.map(function (it) {
+          return '- ' + it.name + ' (' + it.unitLabel + ') x ' + it.qty + ' = ' + it.lineTotal + ' บาท';
+        }).join('\n')
+      : (data.itemsText || '');
+
+    sheet.appendRow([
+      data.submittedAt || new Date().toLocaleString('th-TH', { timeZone: 'Asia/Bangkok' }),
+      data.orderId || '',
+      data.branchName || '',
+      data.customerName || '',
+      data.phone || '',
+      data.address || '',
+      data.totalWeightKg || 0,
+      data.subtotal || 0,
+      data.shippingFee || 0,
+      data.grandTotal || 0,
+      itemsSummary,
+      data.note || '',
+      slipUrl,
+      slipFileName
+    ]);
+
+    // หากต้องการรับอีเมลแจ้งเตือนทุกครั้งที่มีบิลเข้า ให้ปลดคอมเมนต์ด้านล่าง
+    // MailApp.sendEmail(
+    //   ADMIN_EMAIL,
+    //   'มีบิลสั่งของ RINCHA ใหม่: ' + (data.orderId || '') + ' (' + (data.branchName || '') + ')',
+    //   'ยอดสุทธิ: ' + (data.grandTotal || 0) + ' บาท\nดูรายละเอียดใน Google Sheets และลิงก์สลิป: ' + slipUrl
+    // );
+
+    return ContentService
+      .createTextOutput(JSON.stringify({ ok: true, slipUrl: slipUrl }))
+      .setMimeType(ContentService.MimeType.JSON);
+  } catch (err) {
+    return ContentService
+      .createTextOutput(JSON.stringify({ ok: false, error: err.message }))
+      .setMimeType(ContentService.MimeType.JSON);
+  }
+}
+
+function getOrCreateFolder_(name) {
+  const folders = DriveApp.getFoldersByName(name);
+  if (folders.hasNext()) {
+    return folders.next();
+  }
+  return DriveApp.createFolder(name);
+}
+
+function mimeToExtension_(mimeType) {
+  const map = {
+    'image/jpeg': '.jpg',
+    'image/jpg': '.jpg',
+    'image/png': '.png',
+    'image/webp': '.webp',
+    'image/heic': '.heic',
+    'application/pdf': '.pdf'
+  };
+  return map[mimeType] || '.jpg';
+}
